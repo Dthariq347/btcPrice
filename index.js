@@ -47,7 +47,7 @@ async function fetchCryptoData() {
   }
 }
 
-// Function untuk mendapatkan data historis dan membuat URL chart
+// Function untuk mendapatkan data historis dan membuat URL chart (VERSI YANG DITINGKATKAN)
 async function getChartUrl(cryptoId) {
   try {
     const response = await fetch(CRYPTO_HISTORY_API(cryptoId));
@@ -58,57 +58,56 @@ async function getChartUrl(cryptoId) {
       return null;
     }
     
-    // Mengekstrak harga dan timestamp
-    const prices = data.prices.map(item => item[1]);
-    const labels = data.prices.map(item => {
+    // Mengekstrak harga (maksimal 7 titik data untuk URL yang lebih pendek)
+    const allPrices = data.prices;
+    // Filter untuk mendapatkan poin yang merata sepanjang periode
+    const step = Math.max(1, Math.floor(allPrices.length / 7));
+    const filteredPrices = [];
+    
+    for (let i = 0; i < allPrices.length; i += step) {
+      if (filteredPrices.length < 7) {
+        filteredPrices.push(allPrices[i]);
+      }
+    }
+    
+    // Pastikan poin terakhir selalu ada
+    if (filteredPrices[filteredPrices.length - 1] !== allPrices[allPrices.length - 1]) {
+      filteredPrices.push(allPrices[allPrices.length - 1]);
+    }
+    
+    // Format data untuk chart
+    const prices = filteredPrices.map(item => parseFloat(item[1].toFixed(2)));
+    
+    // Format tanggal yang lebih sederhana
+    const labels = filteredPrices.map(item => {
       const date = new Date(item[0]);
       return `${date.getDate()}/${date.getMonth() + 1}`;
     });
     
-    // Warna untuk chart berdasarkan trend
+    // Tentukan apakah trend positif atau negatif
     const isPositive = prices[0] < prices[prices.length - 1];
     const chartColor = isPositive ? '75,192,75' : '255,99,99';
     
-    // Membuat URL chart menggunakan QuickChart.io
-    const chartConfig = {
-      type: 'line',
-      data: {
-        labels: labels,
-        datasets: [{
-          label: `${CRYPTO_NAMES[cryptoId]} Price (USD)`,
-          data: prices,
-          fill: false,
-          borderColor: `rgba(${chartColor},1)`,
-          backgroundColor: `rgba(${chartColor},0.2)`,
-          tension: 0.4,
-          pointRadius: 3
+    // Buat chart dengan parameter yang lebih sederhana
+    return `https://quickchart.io/chart?w=500&h=300&c={
+      "type":"line",
+      "data":{
+        "labels":[${labels.map(l => `"${l}"`).join(',')}],
+        "datasets":[{
+          "label":"Price (USD)",
+          "data":[${prices.join(',')}],
+          "fill":false,
+          "borderColor":"rgba(${chartColor},1)",
+          "tension":0.4
         }]
       },
-      options: {
-        responsive: true,
-        title: {
-          display: true,
-          text: `${CRYPTO_NAMES[cryptoId]} - 7 Day Price History`
+      "options":{
+        "plugins":{
+          "title":{"display":true,"text":"${CRYPTO_NAMES[cryptoId]} - 7 Day Chart"}
         },
-        scales: {
-          xAxes: [{
-            gridLines: {
-              display: false
-            }
-          }],
-          yAxes: [{
-            ticks: {
-              callback: 'function(value){return "$"+value.toLocaleString()}'
-            }
-          }]
-        }
+        "scales":{"y":{"beginAtZero":false}}
       }
-    };
-    
-    // Encode chart configuration untuk URL
-    const encodedConfig = encodeURIComponent(JSON.stringify(chartConfig));
-    return `https://quickchart.io/chart?c=${encodedConfig}`;
-    
+    }`;
   } catch (error) {
     console.error(`Error generating chart for ${cryptoId}:`, error);
     return null;
@@ -149,6 +148,7 @@ async function sendMorningUpdate(channel) {
     try {
       const btcChartUrl = await getChartUrl('bitcoin');
       if (btcChartUrl) {
+        console.log("Morning update chart URL:", btcChartUrl.substring(0, 100) + "...");
         morningUpdateEmbed.setImage(btcChartUrl);
       }
     } catch (chartError) {
@@ -364,6 +364,9 @@ client.on('messageCreate', async (message) => {
       if (!chartUrl) {
         return message.reply(`Maaf, tidak dapat membuat chart untuk ${CRYPTO_NAMES[cryptoId]}.`);
       }
+      
+      // Log URL untuk debugging
+      console.log(`Chart URL for ${cryptoId}:`, chartUrl.substring(0, 100) + "...");
       
       // Mengambil data harga
       const currentData = cryptoData[cryptoId];
