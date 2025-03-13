@@ -47,7 +47,7 @@ async function fetchCryptoData() {
   }
 }
 
-// Function untuk mendapatkan data historis dan membuat URL chart (VERSI YANG DITINGKATKAN)
+// Function untuk mendapatkan data historis dan membuat URL chart yang valid
 async function getChartUrl(cryptoId) {
   try {
     const response = await fetch(CRYPTO_HISTORY_API(cryptoId));
@@ -58,9 +58,8 @@ async function getChartUrl(cryptoId) {
       return null;
     }
     
-    // Mengekstrak harga (maksimal 7 titik data untuk URL yang lebih pendek)
+    // Mengekstrak harga (maksimal 7 titik data)
     const allPrices = data.prices;
-    // Filter untuk mendapatkan poin yang merata sepanjang periode
     const step = Math.max(1, Math.floor(allPrices.length / 7));
     const filteredPrices = [];
     
@@ -88,26 +87,41 @@ async function getChartUrl(cryptoId) {
     const isPositive = prices[0] < prices[prices.length - 1];
     const chartColor = isPositive ? '75,192,75' : '255,99,99';
     
-    // Buat chart dengan parameter yang lebih sederhana
-    return `https://quickchart.io/chart?w=500&h=300&c={
-      "type":"line",
-      "data":{
-        "labels":[${labels.map(l => `"${l}"`).join(',')}],
-        "datasets":[{
-          "label":"Price (USD)",
-          "data":[${prices.join(',')}],
-          "fill":false,
-          "borderColor":"rgba(${chartColor},1)",
-          "tension":0.4
+    // Buat objek config chart
+    const chartConfig = {
+      type: "line",
+      data: {
+        labels: labels,
+        datasets: [{
+          label: "Price (USD)",
+          data: prices,
+          fill: false,
+          borderColor: `rgba(${chartColor},1)`,
+          tension: 0.4
         }]
       },
-      "options":{
-        "plugins":{
-          "title":{"display":true,"text":"${CRYPTO_NAMES[cryptoId]} - 7 Day Chart"}
+      options: {
+        plugins: {
+          title: {
+            display: true,
+            text: `${CRYPTO_NAMES[cryptoId]} - 7 Day Chart`
+          }
         },
-        "scales":{"y":{"beginAtZero":false}}
+        scales: {
+          y: {
+            beginAtZero: false
+          }
+        }
       }
-    }`;
+    };
+    
+    // Encode objek config menjadi string JSON dan kemudian encode URL
+    // PENTING: Gunakan JSON.stringify untuk menghilangkan whitespace
+    const encodedConfig = encodeURIComponent(JSON.stringify(chartConfig));
+    
+    // Buat URL akhir dengan format yang valid
+    return `https://quickchart.io/chart?w=500&h=300&c=${encodedConfig}`;
+    
   } catch (error) {
     console.error(`Error generating chart for ${cryptoId}:`, error);
     return null;
@@ -148,7 +162,7 @@ async function sendMorningUpdate(channel) {
     try {
       const btcChartUrl = await getChartUrl('bitcoin');
       if (btcChartUrl) {
-        console.log("Morning update chart URL:", btcChartUrl.substring(0, 100) + "...");
+        console.log("Morning update chart URL length:", btcChartUrl.length);
         morningUpdateEmbed.setImage(btcChartUrl);
       }
     } catch (chartError) {
@@ -365,8 +379,8 @@ client.on('messageCreate', async (message) => {
         return message.reply(`Maaf, tidak dapat membuat chart untuk ${CRYPTO_NAMES[cryptoId]}.`);
       }
       
-      // Log URL untuk debugging
-      console.log(`Chart URL for ${cryptoId}:`, chartUrl.substring(0, 100) + "...");
+      // Log URL length untuk debugging
+      console.log(`Chart URL length for ${cryptoId}:`, chartUrl.length);
       
       // Mengambil data harga
       const currentData = cryptoData[cryptoId];
