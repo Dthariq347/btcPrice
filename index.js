@@ -1,3 +1,195 @@
+// Import dependencies
+const { Client, GatewayIntentBits, EmbedBuilder, ActivityType } = require('discord.js');
+const fetch = require('node-fetch');
+const cron = require('node-cron');
+require('dotenv').config();
+
+// Membuat client Discord
+const client = new Client({
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent
+  ]
+});
+
+// Prefix untuk perintah bot
+const prefix = '!';
+
+// API endpoint untuk mendapatkan harga cryptocurrency
+const CRYPTO_API_URL = 'https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,solana,cardano,xrp,dogecoin,polkadot,binancecoin,manta-network&vs_currencies=usd,idr,eur&include_24hr_change=true';
+
+// API untuk mendapatkan data historis (7 hari terakhir)
+const CRYPTO_HISTORY_API = (cryptoId) => `https://api.coingecko.com/api/v3/coins/${cryptoId}/market_chart?vs_currency=usd&days=7&interval=daily`;
+
+// Daftar nama tampilan cryptocurrency
+const CRYPTO_NAMES = {
+  'bitcoin': 'Bitcoin (BTC)',
+  'ethereum': 'Ethereum (ETH)',
+  'solana': 'Solana (SOL)',
+  'cardano': 'Cardano (ADA)',
+  'xrp': 'Ripple (XRP)',
+  'dogecoin': 'Dogecoin (DOGE)',
+  'polkadot': 'Polkadot (DOT)',
+  'binancecoin': 'Binance Coin (BNB)',
+  'manta-network': 'Manta Network (MANTA)'
+};
+
+// Function untuk mendapatkan data cryptocurrency terbaru
+async function fetchCryptoData() {
+  try {
+    const response = await fetch(CRYPTO_API_URL);
+    const data = await response.json();
+    return data;
+  } catch (error) {
+    console.error('Error fetching cryptocurrency data:', error);
+    return null;
+  }
+}
+
+// Function untuk mendapatkan data historis dan membuat URL chart
+async function getChartUrl(cryptoId) {
+  try {
+    const response = await fetch(CRYPTO_HISTORY_API(cryptoId));
+    const data = await response.json();
+    
+    if (!data || !data.prices || data.prices.length === 0) {
+      console.error(`Tidak ada data historis untuk ${cryptoId}`);
+      return null;
+    }
+    
+    // Mengekstrak harga dan timestamp
+    const prices = data.prices.map(item => item[1]);
+    const labels = data.prices.map(item => {
+      const date = new Date(item[0]);
+      return `${date.getDate()}/${date.getMonth() + 1}`;
+    });
+    
+    // Warna untuk chart berdasarkan trend
+    const isPositive = prices[0] < prices[prices.length - 1];
+    const chartColor = isPositive ? '75,192,75' : '255,99,99';
+    
+    // Membuat URL chart menggunakan QuickChart.io
+    const chartConfig = {
+      type: 'line',
+      data: {
+        labels: labels,
+        datasets: [{
+          label: `${CRYPTO_NAMES[cryptoId]} Price (USD)`,
+          data: prices,
+          fill: false,
+          borderColor: `rgba(${chartColor},1)`,
+          backgroundColor: `rgba(${chartColor},0.2)`,
+          tension: 0.4,
+          pointRadius: 3
+        }]
+      },
+      options: {
+        responsive: true,
+        title: {
+          display: true,
+          text: `${CRYPTO_NAMES[cryptoId]} - 7 Day Price History`
+        },
+        scales: {
+          xAxes: [{
+            gridLines: {
+              display: false
+            }
+          }],
+          yAxes: [{
+            ticks: {
+              callback: 'function(value){return "$"+value.toLocaleString()}'
+            }
+          }]
+        }
+      }
+    };
+    
+    // Encode chart configuration untuk URL
+    const encodedConfig = encodeURIComponent(JSON.stringify(chartConfig));
+    return `https://quickchart.io/chart?c=${encodedConfig}`;
+    
+  } catch (error) {
+    console.error(`Error generating chart for ${cryptoId}:`, error);
+    return null;
+  }
+}
+
+// Function untuk mengirim update pagi hari
+async function sendMorningUpdate(channel) {
+  try {
+    const data = await fetchCryptoData();
+    
+    if (!data || Object.keys(data).length === 0) {
+      return console.error('Tidak dapat mengambil data cryptocurrency untuk update pagi');
+    }
+    
+    // Membuat embed untuk update pagi
+    const morningUpdateEmbed = new EmbedBuilder()
+      .setTitle('🌅 Update Harga Cryptocurrency Pagi Ini')
+      .setColor('#f7931a') // Warna Bitcoin orange
+      .setDescription('Berikut adalah ringkasan harga cryptocurrency pagi ini:')
+      .setFooter({ text: 'Update Otomatis Pagi Hari • Data dari CoinGecko API' })
+      .setTimestamp();
+    
+    // Menambahkan field untuk setiap cryptocurrency
+    Object.keys(data).forEach(cryptoId => {
+      const cryptoData = data[cryptoId];
+      const usdChange = cryptoData.usd_24h_change ? cryptoData.usd_24h_change.toFixed(2) : 'N/A';
+      const changeEmoji = cryptoData.usd_24h_change >= 0 ? '🟢' : '🔴';
+      
+      morningUpdateEmbed.addFields({
+        name: CRYPTO_NAMES[cryptoId],
+        value: `$${cryptoData.usd.toLocaleString()} (${changeEmoji} ${usdChange}%)`,
+        inline: true
+      });
+    });
+    
+    // Tambahkan chart Bitcoin sebagai thumbnail
+    try {
+      const btcChartUrl = await getChartUrl('bitcoin');
+      if (btcChartUrl) {
+        morningUpdateEmbed.setImage(btcChartUrl);
+      }
+    } catch (chartError) {
+      console.error('Error adding Bitcoin chart to morning update:', chartError);
+    }
+    
+    // Kirim embed ke channel
+    channel.send({ embeds: [morningUpdateEmbed] });
+    
+    console.log(`Update pagi berhasil dikirim ke channel ${channel.name}`);
+  } catch (error) {
+    console.error('Error mengirim update pagi:', error);
+  }
+}
+
+// Event ketika bot siap
+client.once('ready', () => {
+  console.log(`Bot telah online sebagai ${client.user.tag}`);
+  client.user.setActivity('Crypto Prices', { type: ActivityType.Watching });
+  
+  // Jadwalkan update pagi setiap hari jam 7 pagi
+  // Format: detik menit jam tanggal bulan hari-minggu
+  cron.schedule('0 0 7 * * *', () => {
+    console.log('Menjalankan update pagi otomatis...');
+    
+    // Kirim update ke channel yang ditentukan
+    // Ganti 'channel-id' dengan ID channel Discord yang ingin menerima update
+    const updateChannel = client.channels.cache.get(process.env.UPDATE_CHANNEL_ID);
+    
+    if (updateChannel) {
+      sendMorningUpdate(updateChannel);
+    } else {
+      console.error('Channel untuk update pagi tidak ditemukan. Pastikan UPDATE_CHANNEL_ID diatur dengan benar.');
+    }
+  }, {
+    timezone: "Asia/Jakarta" // Sesuaikan dengan zona waktu Anda
+  });
+  
+  console.log('Update otomatis pagi hari telah dijadwalkan untuk jam 7:00 WIB setiap hari');
+});
+
 // Event ketika ada pesan
 client.on('messageCreate', async (message) => {
   // Mengabaikan pesan dari bot lain dan pesan yang tidak dimulai dengan prefix
@@ -265,3 +457,6 @@ client.on('messageCreate', async (message) => {
     message.reply({ embeds: [helpEmbed] });
   }
 });
+
+// Login bot menggunakan token
+client.login(process.env.DISCORD_TOKEN);
